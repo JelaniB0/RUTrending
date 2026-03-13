@@ -1,0 +1,49 @@
+{
+  "generated_at": "2026-03-13T04:54:41.784289",
+  "total_reports": 150,
+  "date_range": {
+    "start": "2025-09-02",
+    "end": "2026-03-12"
+  },
+  "by_nature": {
+    "Title IX": 25,
+    "Facilities Issues": 25,
+    "General Residence Life Concern": 25,
+    "Policy Violation": 25,
+    "Roommate Conflict": 25,
+    "Mental Health Concern": 25
+  },
+  "by_campus": {
+    "Busch": 46,
+    "Cook/Douglass": 40,
+    "Livingston": 33,
+    "College Ave": 31
+  },
+  "escalation": {
+    "rupd_called": 44,
+    "ems_present": 9,
+    "transported": 8
+  },
+  "forecast": {
+    "slope": -1.0357142857142856,
+    "r2": 0.21194556451612934,
+    "forecast": {
+      "April 2026": 17.3,
+      "May 2026": 16.2,
+      "June 2026": 15.2
+    }
+  },
+  "anomalies": [],
+  "top_buildings": {
+    "Quad I": 9,
+    "Katzenbach Hall": 8,
+    "Lynton Towers North": 8,
+    "Voorhees Residence Hall": 7,
+    "McCormick Suites": 6,
+    "Sojourner Truth Apartments": 6,
+    "Metzger Hall": 5,
+    "Henderson Apartments": 5,
+    "Newell Apartments": 4,
+    "Frelinghuysen Hall": 4
+  }
+}
