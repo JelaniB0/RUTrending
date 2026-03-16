@@ -24,7 +24,7 @@ const TrendState = Annotation.Root({
   buildingId:          Annotation<number | null>,
   startDate:           Annotation<string | null>,
   endDate:             Annotation<string | null>,
-  userQuery:           Annotation<string | null>,   // natural language query from user
+  userQuery:           Annotation<string | null>,
 
   // Raw data
   rawReports:          Annotation<any[]>,
@@ -36,20 +36,21 @@ const TrendState = Annotation.Root({
   campusAnalysis:      Annotation<string | null>,
   locationAnalysis:    Annotation<string | null>,
   personAnalysis:      Annotation<string | null>,
+  queryAnalysis:       Annotation<string | null>,   
   alerts:              Annotation<string[]>,
   finalReport:         Annotation<string | null>,
 
   // Routing flags
   shouldDrillLocation: Annotation<boolean>,
   shouldDrillPerson:   Annotation<boolean>,
-  flaggedBuildings:    Annotation<string[]>,        // building names to drill into
+  flaggedBuildings:    Annotation<string[]>,
 })
 
 // ─── AGENT NODES ─────────────────────────────────────────────────────────────
 
 // 1. INTAKE AGENT — fetches all raw data from the database
 async function intakeAgent(state: typeof TrendState.State) {
-  console.log('🔍 Intake Agent: fetching data...')
+  console.log('Intake Agent: fetching data...')
 
   const where: any = {}
   if (state.campus) where.building = { campus: state.campus as any }
@@ -104,13 +105,13 @@ async function intakeAgent(state: typeof TrendState.State) {
     ORDER BY total_reports DESC
   `) as any[]
 
-  console.log(`  ✓ Fetched ${rawReports.length} reports, ${buildingStats.length} buildings`)
+  console.log(`   Fetched ${rawReports.length} reports, ${buildingStats.length} buildings`)
   return { rawReports, buildingStats, campusStats }
 }
 
 // 2. BUILDING AGENT — analyzes per-building patterns and sets routing flags
 async function buildingAgent(state: typeof TrendState.State) {
-  console.log('🏢 Building Agent: analyzing building patterns...')
+  console.log('Building Agent: analyzing building patterns...')
 
   const topBuildings = state.buildingStats.slice(0, 10)
   const prompt = `
@@ -137,7 +138,6 @@ Format: FLAGGED_BUILDINGS: ["Building Name 1", "Building Name 2"]
   const response = await model.invoke(prompt)
   const content = response.content as string
 
-  // Extract flagged buildings from response
   let flaggedBuildings: string[] = []
   const flagMatch = content.match(/FLAGGED_BUILDINGS:\s*(\[.*?\])/s)
   if (flagMatch) {
@@ -148,23 +148,21 @@ Format: FLAGGED_BUILDINGS: ["Building Name 1", "Building Name 2"]
     }
   }
 
-  // Remove the FLAGGED_BUILDINGS line from the analysis text
   const buildingAnalysis = content.replace(/FLAGGED_BUILDINGS:.*$/s, '').trim()
 
-  // Check if user query requests location drill-down
   const queryWantsLocation = state.userQuery
     ? /room|floor|lounge|lobby|area|location|specific|where/i.test(state.userQuery)
     : false
 
   const shouldDrillLocation = flaggedBuildings.length > 0 || queryWantsLocation
 
-  console.log(`  ✓ Building analysis complete. Flagged ${flaggedBuildings.length} buildings for location drill-down`)
+  console.log(`   Building analysis complete. Flagged ${flaggedBuildings.length} buildings for location drill-down`)
   return { buildingAnalysis, flaggedBuildings, shouldDrillLocation }
 }
 
 // 3. CAMPUS AGENT — campus-wide trend analysis
 async function campusAgent(state: typeof TrendState.State) {
-  console.log('🎓 Campus Agent: analyzing campus-wide trends...')
+  console.log('Campus Agent: analyzing campus-wide trends...')
 
   const prompt = `
 You are a Rutgers University Residence Life analyst. Analyze these campus-wide incident statistics.
@@ -188,15 +186,14 @@ Provide a campus-wide trend analysis covering:
 
   const response = await model.invoke(prompt)
   const campusAnalysis = response.content as string
-  console.log('  ✓ Campus analysis complete')
+  console.log('   Campus analysis complete')
   return { campusAnalysis }
 }
 
 // 4. ALERT AGENT — flags urgent patterns and sets person drill-down flag
 async function alertAgent(state: typeof TrendState.State) {
-  console.log('🚨 Alert Agent: scanning for urgent patterns...')
+  console.log('Alert Agent: scanning for urgent patterns...')
 
-  // Repeat locations
   const repeatLocations = await prisma.$queryRaw`
     SELECT
       b.name AS building_name,
@@ -211,7 +208,6 @@ async function alertAgent(state: typeof TrendState.State) {
     LIMIT 10
   ` as any[]
 
-  // Repeat involved students (appears in 2+ reports)
   const repeatStudents = await prisma.$queryRaw`
     SELECT
       s.first_name || ' ' || s.last_name AS student_name,
@@ -256,19 +252,18 @@ Return ONLY a JSON array of alert strings. No explanation, no markdown.
     alerts = ['ALERT: Unable to parse alert data — manual review recommended.']
   }
 
-  // Trigger person agent if repeat students found OR user asked about a person
   const queryWantsPerson = state.userQuery
     ? /person|student|resident|individual|who|repeat offender|same person/i.test(state.userQuery)
     : false
   const shouldDrillPerson = repeatStudents.length > 0 || queryWantsPerson
 
-  console.log(`Generated ${alerts.length} alerts. Person drill-down: ${shouldDrillPerson}`)
+  console.log(`   Generated ${alerts.length} alerts. Person drill-down: ${shouldDrillPerson}`)
   return { alerts, shouldDrillPerson }
 }
 
 // 5. LOCATION AGENT — drills into flagged buildings at room/floor/area level
 async function locationAgent(state: typeof TrendState.State) {
-  console.log('📍 Location Agent: drilling into flagged buildings...')
+  console.log('Location Agent: drilling into flagged buildings...')
 
   const buildingList = state.flaggedBuildings.map(name => `'${name}'`).join(', ')
 
@@ -287,7 +282,6 @@ async function locationAgent(state: typeof TrendState.State) {
     ORDER BY b.name, r.specific_location, r.date
   `) as any[]
 
-  // Group by building and location
   const grouped: Record<string, Record<string, any[]>> = {}
   for (const row of locationData) {
     if (!grouped[row.building_name]) grouped[row.building_name] = {}
@@ -322,7 +316,7 @@ Be specific with room numbers and locations. 3-5 paragraphs.
 
 // 6. PERSON AGENT — analyzes repeat involved parties
 async function personAgent(state: typeof TrendState.State) {
-  console.log('👤 Person Agent: analyzing repeat involved parties...')
+  console.log(' Person Agent: analyzing repeat involved parties...')
 
   const repeatStudents = await prisma.$queryRaw`
     SELECT
@@ -367,43 +361,178 @@ Refer to students by initials only for privacy (e.g. "Student L.S.").
 
   const response = await model.invoke(prompt)
   const personAnalysis = response.content as string
-  console.log('  ✓ Person analysis complete')
+  console.log('   Person analysis complete')
   return { personAnalysis }
 }
 
-// 7. REPORT AGENT — compiles everything into final executive summary
+// 7. QUERY AGENT — directly answers the user's specific question
+async function queryAgent(state: typeof TrendState.State) {
+  console.log('Query Agent: answering specific user question...')
+
+  if (!state.userQuery) return { queryAnalysis: null }
+
+  const q = state.userQuery.toLowerCase()
+
+  let contextData: any[] = []
+
+  if (q.includes('repeat') || q.includes('offender') || q.includes('student') || q.includes('who')) {
+    contextData = await prisma.$queryRaw`
+      SELECT
+        s.first_name || ' ' || s.last_name AS name,
+        s.ruid,
+        s.hall,
+        COUNT(rs.report_id)::int AS report_count,
+        array_agg(DISTINCT r.nature) AS incident_types
+      FROM students s
+      JOIN report_students rs ON s.id = rs.student_id
+      JOIN reports r ON rs.report_id = r.id
+      GROUP BY s.id, s.first_name, s.last_name, s.ruid, s.hall
+      HAVING COUNT(rs.report_id) >= 2
+      ORDER BY report_count DESC
+    ` as any[]
+  } else if (q.includes('noise')) {
+    contextData = await prisma.$queryRaw`
+      SELECT b.name AS building, b.campus, r.specific_location, COUNT(r.id)::int AS count
+      FROM reports r JOIN buildings b ON r.building_id = b.id
+      WHERE (r.nature = 'General Residence Life Concern' AND r.concern_type ILIKE '%noise%')
+         OR (r.nature = 'Policy Violation' AND r.policy_type = 'NOISE')
+      GROUP BY b.name, b.campus, r.specific_location
+      ORDER BY count DESC LIMIT 10
+    ` as any[]
+  } else if (q.includes('alcohol') || q.includes('drug') || q.includes('cannabis')) {
+    contextData = await prisma.$queryRaw`
+      SELECT b.campus, COUNT(r.id)::int AS total,
+        COUNT(CASE WHEN r.policy_type = 'ALCOHOL_UNDERAGE' THEN 1 END)::int AS alcohol,
+        COUNT(CASE WHEN r.policy_type = 'DRUG_CANNABIS' THEN 1 END)::int AS cannabis
+      FROM reports r JOIN buildings b ON r.building_id = b.id
+      WHERE r.policy_type IN ('ALCOHOL_UNDERAGE', 'DRUG_CANNABIS')
+      GROUP BY b.campus ORDER BY total DESC
+    ` as any[]
+  } else if (q.includes('mental health') || q.includes('wellness') || q.includes('crisis')) {
+    contextData = await prisma.$queryRaw`
+      SELECT b.name AS building, b.campus, r.severity_level, COUNT(r.id)::int AS count
+      FROM reports r JOIN buildings b ON r.building_id = b.id
+      WHERE r.nature = 'Mental Health Concern'
+      GROUP BY b.name, b.campus, r.severity_level
+      ORDER BY count DESC LIMIT 10
+    ` as any[]
+  } else if (q.includes('title ix') || q.includes('sexual') || q.includes('harassment')) {
+    contextData = await prisma.$queryRaw`
+      SELECT b.name AS building, b.campus, COUNT(r.id)::int AS count
+      FROM reports r JOIN buildings b ON r.building_id = b.id
+      WHERE r.nature = 'Title IX'
+      GROUP BY b.name, b.campus
+      ORDER BY count DESC LIMIT 10
+    ` as any[]
+  } else if (q.includes('rupd') || q.includes('police')) {
+    contextData = await prisma.$queryRaw`
+      SELECT b.campus, b.name AS building, COUNT(r.id)::int AS rupd_count
+      FROM reports r JOIN buildings b ON r.building_id = b.id
+      WHERE r.rupd_called = true
+      GROUP BY b.campus, b.name
+      ORDER BY rupd_count DESC LIMIT 10
+    ` as any[]
+  } else if (q.includes('ems') || q.includes('ambulance') || q.includes('transport')) {
+    contextData = await prisma.$queryRaw`
+      SELECT b.campus, b.name AS building,
+        COUNT(r.id)::int AS ems_count,
+        COUNT(CASE WHEN r.transported = true THEN 1 END)::int AS transported
+      FROM reports r JOIN buildings b ON r.building_id = b.id
+      WHERE r.ems_present = true
+      GROUP BY b.campus, b.name
+      ORDER BY ems_count DESC
+    ` as any[]
+  } else if (q.includes('roommate')) {
+    contextData = await prisma.$queryRaw`
+      SELECT b.name AS building, b.campus, COUNT(r.id)::int AS count
+      FROM reports r JOIN buildings b ON r.building_id = b.id
+      WHERE r.nature = 'Roommate Conflict'
+      GROUP BY b.name, b.campus
+      ORDER BY count DESC LIMIT 10
+    ` as any[]
+  } else if (q.includes('facilit') || q.includes('maintenance') || q.includes('flood') || q.includes('power')) {
+    contextData = await prisma.$queryRaw`
+      SELECT b.name AS building, b.campus, r.issue_type, COUNT(r.id)::int AS count
+      FROM reports r JOIN buildings b ON r.building_id = b.id
+      WHERE r.nature = 'Facilities Issues'
+      GROUP BY b.name, b.campus, r.issue_type
+      ORDER BY count DESC LIMIT 10
+    ` as any[]
+  } else {
+    // Generic fallback — use already-fetched building stats
+    contextData = state.buildingStats.slice(0, 15)
+  }
+
+  const prompt = `
+You are a Rutgers Residence Life analyst. A staff member has asked a specific question.
+Answer it directly and thoroughly using the data provided.
+
+QUESTION: ${state.userQuery}
+
+RELEVANT DATA:
+${JSON.stringify(contextData, null, 2)}
+
+ADDITIONAL CONTEXT FROM BUILDING ANALYSIS:
+${state.buildingAnalysis ?? 'Not yet available'}
+
+Instructions:
+- Answer the question directly in the first sentence
+- Use specific numbers, building names, and campus names from the data
+- If the data doesn't fully answer the question, say so clearly
+- 2-4 paragraphs, factual and specific
+`
+
+  const response = await model.invoke(prompt)
+  const queryAnalysis = response.content as string
+  console.log('   Query agent complete')
+  return { queryAnalysis }
+}
+
+// 8. REPORT AGENT — compiles everything into final executive summary
 async function reportAgent(state: typeof TrendState.State) {
-  console.log('📋 Report Agent: compiling final report...')
+  console.log('Report Agent: compiling final report...')
 
   const sections = [
+    state.queryAnalysis    ? `SPECIFIC QUERY ANSWER:\n${state.queryAnalysis}`   : null,
     `CAMPUS ANALYSIS:\n${state.campusAnalysis}`,
     `BUILDING ANALYSIS:\n${state.buildingAnalysis}`,
     state.locationAnalysis ? `LOCATION DRILL-DOWN:\n${state.locationAnalysis}` : null,
-    state.personAnalysis   ? `PERSON PATTERNS:\n${state.personAnalysis}` : null,
+    state.personAnalysis   ? `PERSON PATTERNS:\n${state.personAnalysis}`       : null,
     `ALERTS:\n${state.alerts.join('\n')}`,
   ].filter(Boolean).join('\n\n')
 
   const prompt = `
-You are a Rutgers University Residence Life director writing an executive summary report.
+  You are a Rutgers University Residence Life director writing an executive summary report.
 
-${sections}
+  GROUND TRUTH — USE ONLY THESE EXACT NUMBERS. DO NOT INVENT OR MODIFY ANY STATISTICS:
 
-USER QUERY (if any): ${state.userQuery ?? 'General trend analysis'}
+  CAMPUS STATS (authoritative):
+  ${JSON.stringify(state.campusStats, null, 2)}
 
-Write a concise executive summary (4-6 paragraphs) suitable for a Residence Life director.
-Structure it as:
-1. Overall community health assessment
-2. Top concerns and hotspots
-3. Notable patterns (location, person, or escalation trends if applicable)
-4. Recommended immediate actions
-5. Longer-term recommendations
+  TOP BUILDINGS (authoritative):
+  ${JSON.stringify(state.buildingStats.slice(0, 10), null, 2)}
 
-Be direct, specific, and actionable.
-`
+  AGENT ANALYSES (use for narrative context only, not for numbers):
+  ${sections}
+
+  USER QUERY (if any): ${state.userQuery ?? 'General trend analysis'}
+
+  Write a concise executive summary (4-6 paragraphs) suitable for a Residence Life director.
+  Structure it as:
+  1. Overall community health assessment
+  2. Top concerns and hotspots — ONLY cite numbers from CAMPUS STATS and TOP BUILDINGS above
+  3. Notable patterns (location, person, or escalation trends if applicable)
+  4. Recommended immediate actions
+  5. Longer-term recommendations
+
+  CRITICAL: Every number you write must match the GROUND TRUTH data exactly.
+  Do not round, estimate, or carry over numbers from the agent analyses.
+  If a number isn't in the ground truth data, do not include it.
+  `
 
   const response = await model.invoke(prompt)
   const finalReport = response.content as string
-  console.log('  ✓ Final report compiled')
+  console.log('Final report compiled')
   return { finalReport }
 }
 
@@ -430,16 +559,21 @@ const graph = new StateGraph(TrendState)
   .addNode('alertScanner',     alertAgent)
   .addNode('locationAnalyzer', locationAgent)
   .addNode('personAnalyzer',   personAgent)
+  .addNode('queryAnalyzer',    queryAgent)
   .addNode('reportCompiler',   reportAgent)
 
-  // Intake fans out to three parallel agents
+  // Intake fans out to four parallel agents
   .addEdge('__start__',        'intake')
   .addEdge('intake',           'buildingAnalyzer')
   .addEdge('intake',           'campusAnalyzer')
   .addEdge('intake',           'alertScanner')
+  .addEdge('intake',           'queryAnalyzer')   // ← runs in parallel with others
 
   // Campus always feeds into report
   .addEdge('campusAnalyzer',   'reportCompiler')
+
+  // Query always feeds into report
+  .addEdge('queryAnalyzer',    'reportCompiler')
 
   // Building conditionally activates location agent
   .addConditionalEdges('buildingAnalyzer', routeAfterBuilding)
@@ -477,6 +611,7 @@ export async function runTrendAnalysis(options: {
     campusAnalysis:      null,
     locationAnalysis:    null,
     personAnalysis:      null,
+    queryAnalysis:       null,
     alerts:              [],
     finalReport:         null,
     shouldDrillLocation: false,

@@ -58,20 +58,24 @@ export async function GET(req: NextRequest) {
     }
  
     if (type === 'nature') {
-      const results = await prisma.$queryRaw`
+      const campusFilter = campus ? `WHERE b.campus = '${campus}'` : ''
+      const results = await prisma.$queryRawUnsafe(`
         SELECT
           DATE_TRUNC('month', r.date) AS month,
           r.nature,
           COUNT(r.id)::int AS total
         FROM reports r
+        JOIN buildings b ON r.building_id = b.id
+        ${campusFilter}
         GROUP BY DATE_TRUNC('month', r.date), r.nature
         ORDER BY month ASC, total DESC
-      `
+      `)
       return NextResponse.json({ success: true, type, data: results })
     }
  
     if (type === 'repeat') {
-      const results = await prisma.$queryRaw`
+      const campusFilter = campus ? `AND b.campus = '${campus}'` : ''
+      const results = await prisma.$queryRawUnsafe(`
         SELECT
           b.name AS building_name,
           b.campus,
@@ -82,11 +86,12 @@ export async function GET(req: NextRequest) {
           MAX(r.date) AS last_incident
         FROM reports r
         JOIN buildings b ON r.building_id = b.id
+        WHERE 1=1 ${campusFilter}
         GROUP BY b.name, b.campus, r.specific_location
         HAVING COUNT(r.id) > 1
         ORDER BY incident_count DESC
         LIMIT 20
-      `
+      `)
       return NextResponse.json({ success: true, type, data: results })
     }
  

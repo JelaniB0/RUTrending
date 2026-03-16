@@ -56,6 +56,15 @@ export async function GET(req: NextRequest) {
 // POST /api/reports
 // Submits a new report and runs LangChain extraction automatically
 export async function POST(req: NextRequest) {
+    const NATURE_MAP: Record<string, string> = {
+    'Title IX':                       'TITLE_IX',
+    'Mental Health Concern':          'MENTAL_HEALTH',
+    'Policy Violation':               'POLICY_VIOLATION',
+    'Roommate Conflict':              'ROOMMATE_CONFLICT',
+    'General Residence Life Concern': 'GENERAL_CONCERN',
+    'Facilities Issues':              'FACILITIES',
+  }
+
   try {
     const body = await req.json()
 
@@ -90,14 +99,21 @@ export async function POST(req: NextRequest) {
     }
 
     // Look up submitted_by staff
-    const staff = await prisma.staff.findFirst({
+    // Look up or create submitted_by staff
+    let staff = await prisma.staff.findFirst({
       where: { full_name: { contains: submitted_by_name, mode: 'insensitive' } }
     })
+
     if (!staff) {
-      return NextResponse.json(
-        { success: false, error: `Staff member "${submitted_by_name}" not found` },
-        { status: 400 }
-      )
+      staff = await prisma.staff.create({
+        data: {
+          full_name: submitted_by_name,
+          username:  body.ra_username ?? null,
+          role:      'RA',
+          phone:     body.ra_phone ?? null,
+          email:     body.ra_email ?? null,
+        }
+      })
     }
 
     // Generate next report ID
@@ -111,7 +127,7 @@ export async function POST(req: NextRequest) {
         report_id:        newReportId,
         building_id:      building.id,
         specific_location,
-        nature:           nature as any,
+        nature: (NATURE_MAP[nature] ?? nature) as any,
         policy_type:      policy_type    ?? null,
         severity_level:   severity_level ?? null,
         concern_type:     concern_type   ?? null,
