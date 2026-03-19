@@ -139,7 +139,7 @@ Format: FLAGGED_BUILDINGS: ["Building Name 1", "Building Name 2"]
   const content = response.content as string
 
   let flaggedBuildings: string[] = []
-  const flagMatch = content.match(/FLAGGED_BUILDINGS:\s*(\[.*?\])/s)
+  const flagMatch = content.match(/FLAGGED_BUILDINGS:\s*(\[.*?\])/)
   if (flagMatch) {
     try {
       flaggedBuildings = JSON.parse(flagMatch[1])
@@ -148,7 +148,7 @@ Format: FLAGGED_BUILDINGS: ["Building Name 1", "Building Name 2"]
     }
   }
 
-  const buildingAnalysis = content.replace(/FLAGGED_BUILDINGS:.*$/s, '').trim()
+  const buildingAnalysis = content.replace(/FLAGGED_BUILDINGS:.*$/, '').trim()
 
   const queryWantsLocation = state.userQuery
     ? /room|floor|lounge|lobby|area|location|specific|where/i.test(state.userQuery)
