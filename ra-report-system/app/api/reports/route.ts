@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { embedText } from '@/lib/embed'
 
 // GET /api/reports
 // Supports query params: campus, building, nature, startDate, endDate, rupd, limit
@@ -147,6 +148,19 @@ export async function POST(req: NextRequest) {
         submitted_by: true,
       }
     })
+
+    try {
+      const embedding = await embedText(body.narrative)
+      const vector = `[${embedding.join(',')}]`
+      await prisma.$executeRawUnsafe(
+        `UPDATE reports SET narrative_embedding = $1::vector WHERE id = $2`,
+        vector,
+        report.id
+      )
+    } catch (e) {
+      // don't fail the whole submission if embedding fails
+      console.error('Embedding failed:', e)
+    }
 
     // ── Run LangChain extraction on the narrative ─────────────────────────
     try {

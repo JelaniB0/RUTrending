@@ -1,24 +1,128 @@
-// ─── RA Report System — Prisma Schema ────────────────────────────────────────
-// Database: PostgreSQL via Supabase
-// ORM: Prisma
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
-// ─── ENUMS ───────────────────────────────────────────────────────────────────
+model Building {
+  id      Int      @id @default(autoincrement())
+  name    String   @unique
+  campus  Campus
+  reports Report[]
+
+  @@map("buildings")
+}
+
+model Staff {
+  id                Int           @id @default(autoincrement())
+  full_name         String
+  username          String?       @unique
+  role              StaffRole
+  phone             String?
+  email             String?       @unique
+  report_staff      ReportStaff[]
+  submitted_reports Report[]      @relation("SubmittedBy")
+
+  @@map("staff")
+}
+
+model Report {
+  id                  Int                    @id @default(autoincrement())
+  report_id           String                 @unique
+  building_id         Int
+  specific_location   String
+  nature              ReportNature
+  policy_type         PolicyType?
+  severity_level      MentalHealthSeverity?
+  concern_type        String?
+  issue_type          String?
+  date                DateTime               @db.Date
+  time                String
+  narrative           String
+  submitted_by_id     Int
+  rupd_called         Boolean                @default(false)
+  cad_number          String?
+  ems_present         Boolean                @default(false)
+  transported         Boolean                @default(false)
+  emergency_single    String?
+  created_at          DateTime               @default(now())
+  updated_at          DateTime               @updatedAt
+  narrative_embedding Unsupported("vector")?
+  report_staff        ReportStaff[]
+  involved_students   ReportStudent[]
+  building            Building               @relation(fields: [building_id], references: [id])
+  submitted_by        Staff                  @relation("SubmittedBy", fields: [submitted_by_id], references: [id])
+  timeline_events     TimelineEvent[]
+
+  @@index([building_id])
+  @@index([nature])
+  @@index([date])
+  @@index([rupd_called])
+  @@map("reports")
+}
+
+model ReportStaff {
+  id             Int          @id @default(autoincrement())
+  report_id      Int
+  staff_id       Int
+  role_in_report RoleInReport
+  report         Report       @relation(fields: [report_id], references: [id])
+  staff          Staff        @relation(fields: [staff_id], references: [id])
+
+  @@unique([report_id, staff_id])
+  @@map("report_staff")
+}
+
+model Student {
+  id              Int             @id @default(autoincrement())
+  first_name      String
+  last_name       String
+  ruid            String?         @unique
+  dob             DateTime?       @db.Date
+  phone           String?
+  email           String?
+  hall            String?
+  report_students ReportStudent[]
+
+  @@map("students")
+}
+
+model ReportStudent {
+  id         Int         @id @default(autoincrement())
+  report_id  Int
+  student_id Int
+  role       StudentRole
+  notes      String?
+  report     Report      @relation(fields: [report_id], references: [id])
+  student    Student     @relation(fields: [student_id], references: [id])
+
+  @@unique([report_id, student_id])
+  @@map("report_students")
+}
+
+model TimelineEvent {
+  id          Int      @id @default(autoincrement())
+  report_id   Int
+  event_time  String
+  event_date  DateTime @db.Date
+  actor       String
+  description String
+  sequence    Int
+  report      Report   @relation(fields: [report_id], references: [id])
+
+  @@index([report_id])
+  @@map("timeline_events")
+}
 
 enum Campus {
-  COLLEGE_AVE    @map("College Ave")
-  BUSCH          @map("Busch")
-  COOK_DOUGLASS  @map("Cook/Douglass")
-  LIVINGSTON     @map("Livingston")
+  COLLEGE_AVE   @map("College Ave")
+  BUSCH         @map("Busch")
+  COOK_DOUGLASS @map("Cook/Douglass")
+  LIVINGSTON    @map("Livingston")
 }
 
 enum StaffRole {
@@ -28,12 +132,12 @@ enum StaffRole {
 }
 
 enum ReportNature {
-  TITLE_IX              @map("Title IX")
-  MENTAL_HEALTH         @map("Mental Health Concern")
-  POLICY_VIOLATION      @map("Policy Violation")
-  ROOMMATE_CONFLICT     @map("Roommate Conflict")
-  GENERAL_CONCERN       @map("General Residence Life Concern")
-  FACILITIES            @map("Facilities Issues")
+  TITLE_IX          @map("Title IX")
+  MENTAL_HEALTH     @map("Mental Health Concern")
+  POLICY_VIOLATION  @map("Policy Violation")
+  ROOMMATE_CONFLICT @map("Roommate Conflict")
+  GENERAL_CONCERN   @map("General Residence Life Concern")
+  FACILITIES        @map("Facilities Issues")
 }
 
 enum PolicyType {
@@ -73,150 +177,4 @@ enum RoleInReport {
   RA
   ARLC
   RLC
-}
-
-// ─── BUILDINGS ───────────────────────────────────────────────────────────────
-
-model Building {
-  id       Int      @id @default(autoincrement())
-  name     String   @unique
-  campus   Campus
-
-  reports  Report[]
-
-  @@map("buildings")
-}
-
-// ─── STAFF ───────────────────────────────────────────────────────────────────
-
-model Staff {
-  id          Int       @id @default(autoincrement())
-  full_name   String
-  username    String?   @unique
-  role        StaffRole
-  phone       String?
-  email       String?   @unique
-
-  // Reports this staff member submitted
-  submitted_reports  Report[]       @relation("SubmittedBy")
-
-  // All reports this staff member was involved in
-  report_staff       ReportStaff[]
-
-  @@map("staff")
-}
-
-// ─── REPORTS ─────────────────────────────────────────────────────────────────
-
-model Report {
-  id                  Int           @id @default(autoincrement())
-  report_id           String        @unique  // e.g. "IR-00001"
-
-  // Location
-  building            Building      @relation(fields: [building_id], references: [id])
-  building_id         Int
-  specific_location   String        // room number, floor, lounge, etc.
-
-  // Classification
-  nature              ReportNature
-  policy_type         PolicyType?           // only for Policy Violation
-  severity_level      MentalHealthSeverity? // only for Mental Health
-  concern_type        String?               // only for General Concern
-  issue_type          String?               // only for Facilities
-
-  // Date & time
-  date                DateTime      @db.Date
-  time                String        // stored as string e.g. "11:45pm"
-
-  // Narrative
-  narrative           String        @db.Text
-
-  // Submission
-  submitted_by        Staff         @relation("SubmittedBy", fields: [submitted_by_id], references: [id])
-  submitted_by_id     Int
-
-  // Emergency response
-  rupd_called         Boolean       @default(false)
-  cad_number          String?
-  ems_present         Boolean       @default(false)
-  transported         Boolean       @default(false)
-  emergency_single    String?
-
-  // Timestamps
-  created_at          DateTime      @default(now())
-  updated_at          DateTime      @updatedAt
-
-  // Relations
-  report_staff        ReportStaff[]
-  involved_students   ReportStudent[]
-  timeline_events     TimelineEvent[]
-
-  @@index([building_id])
-  @@index([nature])
-  @@index([date])
-  @@index([rupd_called])
-  @@map("reports")
-}
-
-// ─── REPORT ↔ STAFF (join table) ─────────────────────────────────────────────
-
-model ReportStaff {
-  id             Int          @id @default(autoincrement())
-  report         Report       @relation(fields: [report_id], references: [id])
-  report_id      Int
-  staff          Staff        @relation(fields: [staff_id], references: [id])
-  staff_id       Int
-  role_in_report RoleInReport // RA, ARLC, or RLC
-
-  @@unique([report_id, staff_id])
-  @@map("report_staff")
-}
-
-// ─── INVOLVED STUDENTS ───────────────────────────────────────────────────────
-
-model Student {
-  id          Int      @id @default(autoincrement())
-  first_name  String
-  last_name   String
-  ruid        String?  @unique
-  dob         DateTime? @db.Date
-  phone       String?
-  email       String?
-  hall        String?  // their assigned residence hall
-
-  report_students ReportStudent[]
-
-  @@map("students")
-}
-
-// ─── REPORT ↔ STUDENT (join table) ───────────────────────────────────────────
-
-model ReportStudent {
-  id         Int         @id @default(autoincrement())
-  report     Report      @relation(fields: [report_id], references: [id])
-  report_id  Int
-  student    Student     @relation(fields: [student_id], references: [id])
-  student_id Int
-  role       StudentRole // accused, victim, witness, etc.
-  notes      String?     // any additional context about this student's role
-
-  @@unique([report_id, student_id])
-  @@map("report_students")
-}
-
-// ─── TIMELINE EVENTS ─────────────────────────────────────────────────────────
-// Extracted from narrative by LangChain — powers the timeline view
-
-model TimelineEvent {
-  id          Int      @id @default(autoincrement())
-  report      Report   @relation(fields: [report_id], references: [id])
-  report_id   Int
-  event_time  String   // e.g. "11:45pm" — extracted from narrative
-  event_date  DateTime @db.Date
-  actor       String   // who performed the action e.g. "RA Jelani Beaugris"
-  description String   // e.g. "Called RUPD", "ARLC arrived on scene"
-  sequence    Int      // ordering within the report (1, 2, 3...)
-
-  @@index([report_id])
-  @@map("timeline_events")
 }
