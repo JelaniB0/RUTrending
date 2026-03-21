@@ -1,20 +1,25 @@
 import * as dotenv from 'dotenv'
 dotenv.config()
 
-import { ChatOpenAI } from '@langchain/openai'
+import OpenAI from 'openai'
 import { StateGraph, Annotation, END } from '@langchain/langgraph'
 import { prisma } from './prisma'
 
 // ─── MODEL ───────────────────────────────────────────────────────────────────
 
-const model = new ChatOpenAI({
-  model: 'gpt-4o',
+const model = new OpenAI({
   apiKey: process.env.GITHUB_TOKEN!,
-  configuration: {
-    baseURL: 'https://models.inference.ai.azure.com',
-  },
-  temperature: 0,
+  baseURL: 'https://models.inference.ai.azure.com',
 })
+
+async function callModel(prompt: string): Promise<string> {
+  const response = await model.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0,
+  })
+  return response.choices[0].message.content!
+}
 
 // ─── STATE DEFINITION ────────────────────────────────────────────────────────
 
@@ -36,7 +41,7 @@ const TrendState = Annotation.Root({
   campusAnalysis:      Annotation<string | null>,
   locationAnalysis:    Annotation<string | null>,
   personAnalysis:      Annotation<string | null>,
-  queryAnalysis:       Annotation<string | null>,   
+  queryAnalysis:       Annotation<string | null>,
   alerts:              Annotation<string[]>,
   finalReport:         Annotation<string | null>,
 
@@ -105,7 +110,7 @@ async function intakeAgent(state: typeof TrendState.State) {
     ORDER BY total_reports DESC
   `) as any[]
 
-  console.log(`   Fetched ${rawReports.length} reports, ${buildingStats.length} buildings`)
+  console.log(`Fetched ${rawReports.length} reports, ${buildingStats.length} buildings`)
   return { rawReports, buildingStats, campusStats }
 }
 
@@ -135,8 +140,7 @@ Format: FLAGGED_BUILDINGS: ["Building Name 1", "Building Name 2"]
 3-5 paragraphs of analysis, then the FLAGGED_BUILDINGS line.
 `
 
-  const response = await model.invoke(prompt)
-  const content = response.content as string
+  const content = await callModel(prompt)
 
   let flaggedBuildings: string[] = []
   const flagMatch = content.match(/FLAGGED_BUILDINGS:\s*(\[.*?\])/)
@@ -156,7 +160,7 @@ Format: FLAGGED_BUILDINGS: ["Building Name 1", "Building Name 2"]
 
   const shouldDrillLocation = flaggedBuildings.length > 0 || queryWantsLocation
 
-  console.log(`   Building analysis complete. Flagged ${flaggedBuildings.length} buildings for location drill-down`)
+  console.log(`Building analysis complete. Flagged ${flaggedBuildings.length} buildings for location drill-down`)
   return { buildingAnalysis, flaggedBuildings, shouldDrillLocation }
 }
 
@@ -184,9 +188,8 @@ Provide a campus-wide trend analysis covering:
 3-4 paragraphs, factual and actionable.
 `
 
-  const response = await model.invoke(prompt)
-  const campusAnalysis = response.content as string
-  console.log('   Campus analysis complete')
+  const campusAnalysis = await callModel(prompt)
+  console.log('Campus analysis complete')
   return { campusAnalysis }
 }
 
@@ -243,10 +246,10 @@ Focus on repeat locations, high RUPD/EMS involvement, and escalating patterns.
 Return ONLY a JSON array of alert strings. No explanation, no markdown.
 `
 
-  const response = await model.invoke(prompt)
+  const raw = await callModel(prompt)
   let alerts: string[] = []
   try {
-    const content = (response.content as string).replace(/```json|```/g, '').trim()
+    const content = raw.replace(/```json|```/g, '').trim()
     alerts = JSON.parse(content)
   } catch {
     alerts = ['ALERT: Unable to parse alert data — manual review recommended.']
@@ -257,7 +260,7 @@ Return ONLY a JSON array of alert strings. No explanation, no markdown.
     : false
   const shouldDrillPerson = repeatStudents.length > 0 || queryWantsPerson
 
-  console.log(`   Generated ${alerts.length} alerts. Person drill-down: ${shouldDrillPerson}`)
+  console.log(`Generated ${alerts.length} alerts. Person drill-down: ${shouldDrillPerson}`)
   return { alerts, shouldDrillPerson }
 }
 
@@ -308,15 +311,14 @@ Analyze location-level patterns within these buildings:
 Be specific with room numbers and locations. 3-5 paragraphs.
 `
 
-  const response = await model.invoke(prompt)
-  const locationAnalysis = response.content as string
+  const locationAnalysis = await callModel(prompt)
   console.log('Location analysis complete')
   return { locationAnalysis }
 }
 
 // 6. PERSON AGENT — analyzes repeat involved parties
 async function personAgent(state: typeof TrendState.State) {
-  console.log(' Person Agent: analyzing repeat involved parties...')
+  console.log('Person Agent: analyzing repeat involved parties...')
 
   const repeatStudents = await prisma.$queryRaw`
     SELECT
@@ -359,9 +361,8 @@ Refer to students by initials only for privacy (e.g. "Student L.S.").
 3-4 paragraphs.
 `
 
-  const response = await model.invoke(prompt)
-  const personAnalysis = response.content as string
-  console.log('   Person analysis complete')
+  const personAnalysis = await callModel(prompt)
+  console.log('Person analysis complete')
   return { personAnalysis }
 }
 
@@ -459,7 +460,6 @@ async function queryAgent(state: typeof TrendState.State) {
       ORDER BY count DESC LIMIT 10
     ` as any[]
   } else {
-    // Generic fallback — use already-fetched building stats
     contextData = state.buildingStats.slice(0, 15)
   }
 
@@ -482,9 +482,8 @@ Instructions:
 - 2-4 paragraphs, factual and specific
 `
 
-  const response = await model.invoke(prompt)
-  const queryAnalysis = response.content as string
-  console.log('   Query agent complete')
+  const queryAnalysis = await callModel(prompt)
+  console.log('Query agent complete')
   return { queryAnalysis }
 }
 
@@ -502,36 +501,35 @@ async function reportAgent(state: typeof TrendState.State) {
   ].filter(Boolean).join('\n\n')
 
   const prompt = `
-  You are a Rutgers University Residence Life director writing an executive summary report.
+You are a Rutgers University Residence Life director writing an executive summary report.
 
-  GROUND TRUTH — USE ONLY THESE EXACT NUMBERS. DO NOT INVENT OR MODIFY ANY STATISTICS:
+GROUND TRUTH — USE ONLY THESE EXACT NUMBERS. DO NOT INVENT OR MODIFY ANY STATISTICS:
 
-  CAMPUS STATS (authoritative):
-  ${JSON.stringify(state.campusStats, null, 2)}
+CAMPUS STATS (authoritative):
+${JSON.stringify(state.campusStats, null, 2)}
 
-  TOP BUILDINGS (authoritative):
-  ${JSON.stringify(state.buildingStats.slice(0, 10), null, 2)}
+TOP BUILDINGS (authoritative):
+${JSON.stringify(state.buildingStats.slice(0, 10), null, 2)}
 
-  AGENT ANALYSES (use for narrative context only, not for numbers):
-  ${sections}
+AGENT ANALYSES (use for narrative context only, not for numbers):
+${sections}
 
-  USER QUERY (if any): ${state.userQuery ?? 'General trend analysis'}
+USER QUERY (if any): ${state.userQuery ?? 'General trend analysis'}
 
-  Write a concise executive summary (4-6 paragraphs) suitable for a Residence Life director.
-  Structure it as:
-  1. Overall community health assessment
-  2. Top concerns and hotspots — ONLY cite numbers from CAMPUS STATS and TOP BUILDINGS above
-  3. Notable patterns (location, person, or escalation trends if applicable)
-  4. Recommended immediate actions
-  5. Longer-term recommendations
+Write a concise executive summary (4-6 paragraphs) suitable for a Residence Life director.
+Structure it as:
+1. Overall community health assessment
+2. Top concerns and hotspots — ONLY cite numbers from CAMPUS STATS and TOP BUILDINGS above
+3. Notable patterns (location, person, or escalation trends if applicable)
+4. Recommended immediate actions
+5. Longer-term recommendations
 
-  CRITICAL: Every number you write must match the GROUND TRUTH data exactly.
-  Do not round, estimate, or carry over numbers from the agent analyses.
-  If a number isn't in the ground truth data, do not include it.
-  `
+CRITICAL: Every number you write must match the GROUND TRUTH data exactly.
+Do not round, estimate, or carry over numbers from the agent analyses.
+If a number isn't in the ground truth data, do not include it.
+`
 
-  const response = await model.invoke(prompt)
-  const finalReport = response.content as string
+  const finalReport = await callModel(prompt)
   console.log('Final report compiled')
   return { finalReport }
 }
@@ -562,30 +560,21 @@ const graph = new StateGraph(TrendState)
   .addNode('queryAnalyzer',    queryAgent)
   .addNode('reportCompiler',   reportAgent)
 
-  // Intake fans out to four parallel agents
   .addEdge('__start__',        'intake')
   .addEdge('intake',           'buildingAnalyzer')
   .addEdge('intake',           'campusAnalyzer')
   .addEdge('intake',           'alertScanner')
-  .addEdge('intake',           'queryAnalyzer')   // ← runs in parallel with others
+  .addEdge('intake',           'queryAnalyzer')
 
-  // Campus always feeds into report
   .addEdge('campusAnalyzer',   'reportCompiler')
-
-  // Query always feeds into report
   .addEdge('queryAnalyzer',    'reportCompiler')
 
-  // Building conditionally activates location agent
   .addConditionalEdges('buildingAnalyzer', routeAfterBuilding)
+  .addConditionalEdges('alertScanner',     routeAfterAlert)
 
-  // Alert conditionally activates person agent
-  .addConditionalEdges('alertScanner', routeAfterAlert)
-
-  // Location and person both feed into report
   .addEdge('locationAnalyzer', 'reportCompiler')
   .addEdge('personAnalyzer',   'reportCompiler')
 
-  // Report is the end
   .addEdge('reportCompiler',   '__end__')
 
 export const trendAgent = graph.compile()
