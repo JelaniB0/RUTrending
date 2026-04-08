@@ -12,13 +12,56 @@ const model = new OpenAI({
   baseURL: 'https://models.inference.ai.azure.com',
 })
 
-async function callModel(prompt: string): Promise<string> {
-  const response = await model.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0,
+const MAX_CONCURRENT = 2
+let activeRequests = 0
+const queue: Array<() => void> = []
+
+function acquireSlot(): Promise<void> {
+  return new Promise(resolve => {
+    if (activeRequests < MAX_CONCURRENT) {
+      activeRequests++
+      resolve()
+    } else {
+      queue.push(() => {
+        activeRequests++
+        resolve()
+      })
+    }
   })
-  return response.choices[0].message.content!
+}
+
+function releaseSlot() {
+  activeRequests--
+  const next = queue.shift()
+  if (next) next()
+}
+
+async function callModel(prompt: string): Promise<string> {
+  await acquireSlot()
+  try {
+    const response = await model.chat.completions.create({
+      model: 'gpt-4.1',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+    })
+    return response.choices[0].message.content!
+  } finally {
+    releaseSlot()
+  }
+}
+
+async function callModelMini(prompt: string): Promise<string> {
+  await acquireSlot()
+  try {
+    const response = await model.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+    })
+    return response.choices[0].message.content!
+  } finally {
+    releaseSlot()
+  }
 }
 
 // ─── STATE DEFINITION ────────────────────────────────────────────────────────
@@ -67,7 +110,6 @@ async function intakeAgent(state: typeof TrendState.State) {
     where,
     include: { building: true, report_staff: { include: { staff: true } } },
     orderBy: { date: 'desc' },
-    take: 100,
   })
 
   const campusClause = state.campus ? `WHERE b.campus = '${state.campus}'` : ''
@@ -294,24 +336,40 @@ async function locationAgent(state: typeof TrendState.State) {
     grouped[row.building_name][row.specific_location].push(row)
   }
 
-  const prompt = `
-You are a Rutgers Residence Life analyst doing a detailed location breakdown.
+  const summary: Record<string, Record<string, { count: number; types: string[] }>> = {}
+for (const row of locationData) {
+  if (!summary[row.building_name]) summary[row.building_name] = {}
+  if (!summary[row.building_name][row.specific_location]) {
+    summary[row.building_name][row.specific_location] = { count: 0, types: [] }
+  }
+  summary[row.building_name][row.specific_location].count++
+  if (!summary[row.building_name][row.specific_location].types.includes(row.nature)) {
+    summary[row.building_name][row.specific_location].types.push(row.nature)
+  }
+}
 
-INCIDENT DATA BY BUILDING AND LOCATION:
-${JSON.stringify(grouped, null, 2)}
+const hotspots: Record<string, Record<string, { count: number; types: string[] }>> = {}
+for (const [building, locations] of Object.entries(summary)) {
+  for (const [location, data] of Object.entries(locations)) {
+    if (data.count >= 2) {
+      if (!hotspots[building]) hotspots[building] = {}
+      hotspots[building][location] = data
+    }
+  }
+}
+
+const prompt = `
+You are a Rutgers Residence Life analyst. Analyze repeat incident locations.
+
+HOTSPOT LOCATIONS (2+ incidents only):
+${JSON.stringify(hotspots, null, 2)}
 
 USER QUERY (if any): ${state.userQuery ?? 'Location pattern analysis'}
 
-Analyze location-level patterns within these buildings:
-1. Which specific rooms, floors, or areas have repeat incidents
-2. Whether repeat incidents in the same location involve the same type or escalating types
-3. Any physical locations that may need environmental interventions (lighting, security cameras, staff presence)
-4. Specific recommendations per building
-
-Be specific with room numbers and locations. 3-5 paragraphs.
+Identify the most concerning repeat locations and recommend interventions. 3 paragraphs max.
 `
 
-  const locationAnalysis = await callModel(prompt)
+  const locationAnalysis = await callModelMini(prompt)
   console.log('Location analysis complete')
   return { locationAnalysis }
 }
@@ -372,108 +430,58 @@ async function queryAgent(state: typeof TrendState.State) {
 
   if (!state.userQuery) return { queryAnalysis: null }
 
-  const q = state.userQuery.toLowerCase()
+  // Step 1: Generate SQL from the question
+  const sqlPrompt = `
+You are a PostgreSQL expert. Write a SQL query to answer the user's question using this schema.
 
-  let contextData: any[] = []
+SCHEMA:
+tables:
+- reports (id, nature, policy_type, severity_level, rupd_called, ems_present, transported, date, specific_location, building_id, narrative)
+- buildings (id, name, campus)
 
-  if (q.includes('repeat') || q.includes('offender') || q.includes('student') || q.includes('who')) {
-    contextData = await prisma.$queryRaw`
-      SELECT
-        s.first_name || ' ' || s.last_name AS name,
-        s.ruid,
-        s.hall,
-        COUNT(rs.report_id)::int AS report_count,
-        array_agg(DISTINCT r.nature) AS incident_types
-      FROM students s
-      JOIN report_students rs ON s.id = rs.student_id
-      JOIN reports r ON rs.report_id = r.id
-      GROUP BY s.id, s.first_name, s.last_name, s.ruid, s.hall
-      HAVING COUNT(rs.report_id) >= 2
-      ORDER BY report_count DESC
-    ` as any[]
-  } else if (q.includes('noise')) {
-    contextData = await prisma.$queryRaw`
-      SELECT b.name AS building, b.campus, r.specific_location, COUNT(r.id)::int AS count
-      FROM reports r JOIN buildings b ON r.building_id = b.id
-      WHERE (r.nature = 'General Residence Life Concern' AND r.concern_type ILIKE '%noise%')
-         OR (r.nature = 'Policy Violation' AND r.policy_type = 'NOISE')
-      GROUP BY b.name, b.campus, r.specific_location
-      ORDER BY count DESC LIMIT 10
-    ` as any[]
-  } else if (q.includes('alcohol') || q.includes('drug') || q.includes('cannabis')) {
-    contextData = await prisma.$queryRaw`
-      SELECT b.campus, COUNT(r.id)::int AS total,
-        COUNT(CASE WHEN r.policy_type = 'ALCOHOL_UNDERAGE' THEN 1 END)::int AS alcohol,
-        COUNT(CASE WHEN r.policy_type = 'DRUG_CANNABIS' THEN 1 END)::int AS cannabis
-      FROM reports r JOIN buildings b ON r.building_id = b.id
-      WHERE r.policy_type IN ('ALCOHOL_UNDERAGE', 'DRUG_CANNABIS')
-      GROUP BY b.campus ORDER BY total DESC
-    ` as any[]
-  } else if (q.includes('mental health') || q.includes('wellness') || q.includes('crisis')) {
-    contextData = await prisma.$queryRaw`
-      SELECT b.name AS building, b.campus, r.severity_level, COUNT(r.id)::int AS count
-      FROM reports r JOIN buildings b ON r.building_id = b.id
-      WHERE r.nature = 'Mental Health Concern'
-      GROUP BY b.name, b.campus, r.severity_level
-      ORDER BY count DESC LIMIT 10
-    ` as any[]
-  } else if (q.includes('title ix') || q.includes('sexual') || q.includes('harassment')) {
-    contextData = await prisma.$queryRaw`
-      SELECT b.name AS building, b.campus, COUNT(r.id)::int AS count
-      FROM reports r JOIN buildings b ON r.building_id = b.id
-      WHERE r.nature = 'Title IX'
-      GROUP BY b.name, b.campus
-      ORDER BY count DESC LIMIT 10
-    ` as any[]
-  } else if (q.includes('rupd') || q.includes('police')) {
-    contextData = await prisma.$queryRaw`
-      SELECT b.campus, b.name AS building, COUNT(r.id)::int AS rupd_count
-      FROM reports r JOIN buildings b ON r.building_id = b.id
-      WHERE r.rupd_called = true
-      GROUP BY b.campus, b.name
-      ORDER BY rupd_count DESC LIMIT 10
-    ` as any[]
-  } else if (q.includes('ems') || q.includes('ambulance') || q.includes('transport')) {
-    contextData = await prisma.$queryRaw`
-      SELECT b.campus, b.name AS building,
-        COUNT(r.id)::int AS ems_count,
-        COUNT(CASE WHEN r.transported = true THEN 1 END)::int AS transported
-      FROM reports r JOIN buildings b ON r.building_id = b.id
-      WHERE r.ems_present = true
-      GROUP BY b.campus, b.name
-      ORDER BY ems_count DESC
-    ` as any[]
-  } else if (q.includes('roommate')) {
-    contextData = await prisma.$queryRaw`
-      SELECT b.name AS building, b.campus, COUNT(r.id)::int AS count
-      FROM reports r JOIN buildings b ON r.building_id = b.id
-      WHERE r.nature = 'Roommate Conflict'
-      GROUP BY b.name, b.campus
-      ORDER BY count DESC LIMIT 10
-    ` as any[]
-  } else if (q.includes('facilit') || q.includes('maintenance') || q.includes('flood') || q.includes('power')) {
-    contextData = await prisma.$queryRaw`
-      SELECT b.name AS building, b.campus, r.issue_type, COUNT(r.id)::int AS count
-      FROM reports r JOIN buildings b ON r.building_id = b.id
-      WHERE r.nature = 'Facilities Issues'
-      GROUP BY b.name, b.campus, r.issue_type
-      ORDER BY count DESC LIMIT 10
-    ` as any[]
-  } else {
-    contextData = state.buildingStats.slice(0, 15)
-  }
-
-  const prompt = `
-You are a Rutgers Residence Life analyst. A staff member has asked a specific question.
-Answer it directly and thoroughly using the data provided.
+nature values: 'Title IX', 'Mental Health Concern', 'Policy Violation', 'Roommate Conflict', 'General Residence Life Concern', 'Facilities Issues'
+policy_type values: 'ALCOHOL_UNDERAGE', 'DRUG_CANNABIS', 'NOISE', 'FIRE_SAFETY_HOTPLATE', 'FIRE_SAFETY_CANDLE', 'FIRE_SAFETY_LITHIUM', 'GUEST_OVERSTAY', 'GUEST_PROPPED', 'PROHIBITED_ITEM', 'VANDALISM', 'SMOKING', 'DISRUPTION', 'WEAPONS'
+severity_level values: 'LOW', 'MEDIUM', 'HIGH', 'CRISIS'
+campus values: 'COLLEGE_AVE', 'BUSCH', 'COOK_DOUGLASS', 'LIVINGSTON'
 
 QUESTION: ${state.userQuery}
 
-RELEVANT DATA:
+Rules:
+- Always JOIN buildings on r.building_id = b.id
+- Always include b.name AS building and b.campus in SELECT when relevant
+- Use COUNT()::int for counts
+- ORDER BY count DESC
+- LIMIT 20
+- Return ONLY the raw SQL query, no markdown, no explanation, no backticks
+- When asked about specific substances or incident types, always break them out as separate columns (e.g. COUNT(CASE WHEN policy_type = 'ALCOHOL_UNDERAGE' THEN 1 END)::int AS alcohol)
+- Never use column aliases in ORDER BY, always repeat the full expression like ORDER BY (COUNT(CASE WHEN r.policy_type = 'ALCOHOL_UNDERAGE' THEN 1 END) + COUNT(CASE WHEN r.policy_type = 'DRUG_CANNABIS' THEN 1 END)) DESC
+- Do not add caveats about data limitations unless data is actually missing
+- Do not say "the data is limited" if the query returned results
+- Include dates in results if you feel the need to. Don't exclude them just to keep the query simpler, your response should be as insightful as possible. 
+`
+
+  let contextData: any[] = []
+  try {
+    const rawSql = await callModel(sqlPrompt)
+    const cleanSql = rawSql.replace(/```sql|```/g, '').trim()
+    console.log('Generated SQL:', cleanSql)
+    contextData = await prisma.$queryRawUnsafe(cleanSql)
+  } catch (err) {
+    console.error('Text-to-SQL failed, falling back to building stats:', err)
+    contextData = state.buildingStats.slice(0, 15)
+  }
+
+  // Step 2: Answer the question using the fetched data
+  const answerPrompt = `
+You are a Rutgers Residence Life analyst. Answer the user's question directly using the data provided.
+
+QUESTION: ${state.userQuery}
+
+DATA:
 ${JSON.stringify(contextData, null, 2)}
 
-ADDITIONAL CONTEXT FROM BUILDING ANALYSIS:
-${state.buildingAnalysis ?? 'Not yet available'}
+ADDITIONAL CONTEXT:
+${state.buildingAnalysis ?? ''}
 
 Instructions:
 - Answer the question directly in the first sentence
@@ -482,12 +490,18 @@ Instructions:
 - 2-4 paragraphs, factual and specific
 `
 
-  const queryAnalysis = await callModel(prompt)
+  const queryAnalysis = await callModel(answerPrompt)
   console.log('Query agent complete')
   return { queryAnalysis }
 }
 
-// 8. REPORT AGENT — compiles everything into final executive summary
+// 8. JOIN NODE — no-op sync point; waits for all parallel branches before report
+async function joinNode(_state: typeof TrendState.State) {
+  console.log('Join Node: all branches complete, proceeding to report...')
+  return {}
+}
+
+// 9. REPORT AGENT — compiles everything into final executive summary
 async function reportAgent(state: typeof TrendState.State) {
   console.log('Report Agent: compiling final report...')
 
@@ -536,16 +550,13 @@ If a number isn't in the ground truth data, do not include it.
 
 // ─── ROUTING FUNCTIONS ────────────────────────────────────────────────────────
 
-function routeAfterBuilding(state: typeof TrendState.State): string[] {
-  const next = ['reportCompiler']
-  if (state.shouldDrillLocation) next.push('locationAnalyzer')
-  return next
+// Returns the optional drill-down node name, or falls through to joinNode
+function routeLocation(state: typeof TrendState.State): string {
+  return state.shouldDrillLocation ? 'locationAnalyzer' : 'joinNode'
 }
 
-function routeAfterAlert(state: typeof TrendState.State): string[] {
-  const next: string[] = []
-  if (state.shouldDrillPerson) next.push('personAnalyzer')
-  return next
+function routePerson(state: typeof TrendState.State): string {
+  return state.shouldDrillPerson ? 'personAnalyzer' : 'joinNode'
 }
 
 // ─── BUILD THE GRAPH ──────────────────────────────────────────────────────────
@@ -558,23 +569,36 @@ const graph = new StateGraph(TrendState)
   .addNode('locationAnalyzer', locationAgent)
   .addNode('personAnalyzer',   personAgent)
   .addNode('queryAnalyzer',    queryAgent)
+  .addNode('joinNode',         joinNode)
   .addNode('reportCompiler',   reportAgent)
 
+  // intake fans out to all four parallel agents
   .addEdge('__start__',        'intake')
   .addEdge('intake',           'buildingAnalyzer')
   .addEdge('intake',           'campusAnalyzer')
   .addEdge('intake',           'alertScanner')
   .addEdge('intake',           'queryAnalyzer')
 
-  .addEdge('campusAnalyzer',   'reportCompiler')
-  .addEdge('queryAnalyzer',    'reportCompiler')
+  // campus and query always go straight to join
+  .addEdge('campusAnalyzer',   'joinNode')
+  .addEdge('queryAnalyzer',    'joinNode')
 
-  .addConditionalEdges('buildingAnalyzer', routeAfterBuilding)
-  .addConditionalEdges('alertScanner',     routeAfterAlert)
+  // building conditionally drills location, then both paths converge at join
+  .addConditionalEdges('buildingAnalyzer', routeLocation, {
+    locationAnalyzer: 'locationAnalyzer',
+    joinNode:         'joinNode',
+  })
+  .addEdge('locationAnalyzer', 'joinNode')
 
-  .addEdge('locationAnalyzer', 'reportCompiler')
-  .addEdge('personAnalyzer',   'reportCompiler')
+  // alert conditionally drills person, then both paths converge at join
+  .addConditionalEdges('alertScanner', routePerson, {
+    personAnalyzer: 'personAnalyzer',
+    joinNode:       'joinNode',
+  })
+  .addEdge('personAnalyzer',   'joinNode')
 
+  // join waits for all upstream paths, then fires the report exactly once
+  .addEdge('joinNode',         'reportCompiler')
   .addEdge('reportCompiler',   '__end__')
 
 export const trendAgent = graph.compile()
