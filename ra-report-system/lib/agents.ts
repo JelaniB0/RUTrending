@@ -455,9 +455,6 @@ Rules:
 - Return ONLY the raw SQL query, no markdown, no explanation, no backticks
 - When asked about specific substances or incident types, always break them out as separate columns (e.g. COUNT(CASE WHEN policy_type = 'ALCOHOL_UNDERAGE' THEN 1 END)::int AS alcohol)
 - Never use column aliases in ORDER BY, always repeat the full expression like ORDER BY (COUNT(CASE WHEN r.policy_type = 'ALCOHOL_UNDERAGE' THEN 1 END) + COUNT(CASE WHEN r.policy_type = 'DRUG_CANNABIS' THEN 1 END)) DESC
-- Do not add caveats about data limitations unless data is actually missing
-- Do not say "the data is limited" if the query returned results
-- Include dates in results if you feel the need to. Don't exclude them just to keep the query simpler, your response should be as insightful as possible. 
 `
 
   let contextData: any[] = []
@@ -488,6 +485,9 @@ Instructions:
 - Use specific numbers, building names, and campus names from the data
 - If the data doesn't fully answer the question, say so clearly
 - 2-4 paragraphs, factual and specific
+- Do not add caveats about data limitations unless data is actually missing
+- Do not say "the data is limited" if the query returned results
+- Include dates in results if you feel the need to. Don't exclude them just to keep the query simpler, your response should be as insightful as possible. 
 `
 
   const queryAnalysis = await callModel(answerPrompt)
