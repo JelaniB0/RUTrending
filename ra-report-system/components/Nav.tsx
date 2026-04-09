@@ -68,6 +68,14 @@ export default function Nav() {
           )}
           {canSeeDashboard && (
             <NavLink
+              label="Map"
+              href="/map"
+              active={pathname.startsWith('/map')}
+              onClick={() => router.push('/map')}
+            />
+          )}
+          {canSeeDashboard && (
+            <NavLink
               label="Reports"
               href="/reports"
               active={pathname.startsWith('/reports')}
