@@ -17,14 +17,11 @@ import time
 from pathlib import Path
 from typing import Optional, TypedDict
 from dotenv import load_dotenv
-
 from openai import AsyncOpenAI
 from langgraph.graph import StateGraph, END
 
 # always find .env one level up from this file (experiments/.env)
 load_dotenv(Path(__file__).parent.parent / ".env")
-
-# ─── CONFIG ───────────────────────────────────────────────────────────────────
 
 USE_REAL_DB: bool = True
 
@@ -41,7 +38,7 @@ semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 async def call_model(prompt: str) -> str:
     async with semaphore:
         response = await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4.1-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
         )
@@ -65,6 +62,7 @@ class TrendState(TypedDict):
     start_date:            Optional[str]
     end_date:              Optional[str]
     user_query:            Optional[str]
+    disabled_agents:       Optional[list[str]]
 
     # Raw data
     raw_reports:           list[dict]
@@ -496,11 +494,15 @@ CRITICAL: Every number must match the GROUND TRUTH exactly. Do not round or esti
 
 # ─── ROUTING ──────────────────────────────────────────────────────────────────
 
-def route_person(state: TrendState) -> str:
-    return "personAnalyzer" if state["should_drill_person"] else END
-
 def route_location(state: TrendState) -> str:
+    if "location" in state.get("disabled_agents", []):
+        return END
     return "locationAnalyzer" if state["should_drill_location"] else END
+
+def route_person(state: TrendState) -> str:
+    if "person" in state.get("disabled_agents", []):
+        return END
+    return "personAnalyzer" if state["should_drill_person"] else END
 
 # ─── BUILD GRAPH ──────────────────────────────────────────────────────────────
 
@@ -546,6 +548,7 @@ async def run_trend_analysis(
     start_date: Optional[str] = None,
     end_date:   Optional[str] = None,
     user_query: Optional[str] = None,
+    disabled_agents: Optional[list[str]] = None,  
 ) -> dict:
     initial: TrendState = {
         "campus":               campus,
@@ -566,6 +569,7 @@ async def run_trend_analysis(
         "should_drill_location": False,
         "should_drill_person":   False,
         "flagged_buildings":    [],
+        "disabled_agents":      disabled_agents or []
     }
     t0 = time.perf_counter()
     result = await trend_agent.ainvoke(initial)

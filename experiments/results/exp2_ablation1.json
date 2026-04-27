@@ -1,0 +1,64 @@
+{
+  "conditions": [
+    {
+      "condition": "Full Pipeline",
+      "disabled": [],
+      "avg_scores": {
+        "accuracy": 5.0,
+        "specificity": 5.0,
+        "actionability": 5.0,
+        "completeness": 4.0,
+        "detail": 4.0
+      },
+      "avg_time": 36.6,
+      "n_trials": 5
+    },
+    {
+      "condition": "No Location Agent",
+      "disabled": [
+        "location"
+      ],
+      "avg_scores": {
+        "accuracy": 5.0,
+        "specificity": 4.8,
+        "actionability": 5.0,
+        "completeness": 4.2,
+        "detail": 4.0
+      },
+      "avg_time": 35.2,
+      "n_trials": 5
+    },
+    {
+      "condition": "No Person Agent",
+      "disabled": [
+        "person"
+      ],
+      "avg_scores": {
+        "accuracy": 5.0,
+        "specificity": 5.0,
+        "actionability": 5.0,
+        "completeness": 4.0,
+        "detail": 4.0
+      },
+      "avg_time": 25.8,
+      "n_trials": 5
+    },
+    {
+      "condition": "Core Only",
+      "disabled": [
+        "location",
+        "person"
+      ],
+      "avg_scores": {
+        "accuracy": 5.0,
+        "specificity": 5.0,
+        "actionability": 5.0,
+        "completeness": 4.0,
+        "detail": 4.0
+      },
+      "avg_time": 22.7,
+      "n_trials": 5
+    }
+  ],
+  "n_trials_per_condition": 5
+}
