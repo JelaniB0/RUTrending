@@ -495,13 +495,7 @@ Instructions:
   return { queryAnalysis }
 }
 
-// 8. JOIN NODE — no-op sync point; waits for all parallel branches before report
-async function joinNode(_state: typeof TrendState.State) {
-  console.log('Join Node: all branches complete, proceeding to report...')
-  return {}
-}
-
-// 9. REPORT AGENT — compiles everything into final executive summary
+// 8. REPORT AGENT — compiles everything into final executive summary
 async function reportAgent(state: typeof TrendState.State) {
   console.log('Report Agent: compiling final report...')
 
@@ -552,11 +546,11 @@ If a number isn't in the ground truth data, do not include it.
 
 // Returns the optional drill-down node name, or falls through to joinNode
 function routeLocation(state: typeof TrendState.State): string {
-  return state.shouldDrillLocation ? 'locationAnalyzer' : 'joinNode'
+  return state.shouldDrillLocation ? 'locationAnalyzer' : 'reportCompiler'
 }
 
 function routePerson(state: typeof TrendState.State): string {
-  return state.shouldDrillPerson ? 'personAnalyzer' : 'joinNode'
+  return state.shouldDrillPerson ? 'personAnalyzer' : 'reportCompiler'
 }
 
 // ─── BUILD THE GRAPH ──────────────────────────────────────────────────────────
@@ -569,36 +563,28 @@ const graph = new StateGraph(TrendState)
   .addNode('locationAnalyzer', locationAgent)
   .addNode('personAnalyzer',   personAgent)
   .addNode('queryAnalyzer',    queryAgent)
-  .addNode('joinNode',         joinNode)
   .addNode('reportCompiler',   reportAgent)
 
-  // intake fans out to all four parallel agents
   .addEdge('__start__',        'intake')
   .addEdge('intake',           'buildingAnalyzer')
   .addEdge('intake',           'campusAnalyzer')
   .addEdge('intake',           'alertScanner')
   .addEdge('intake',           'queryAnalyzer')
 
-  // campus and query always go straight to join
-  .addEdge('campusAnalyzer',   'joinNode')
-  .addEdge('queryAnalyzer',    'joinNode')
+  .addEdge('campusAnalyzer',   'reportCompiler')
+  .addEdge('queryAnalyzer',    'reportCompiler')
 
-  // building conditionally drills location, then both paths converge at join
   .addConditionalEdges('buildingAnalyzer', routeLocation, {
     locationAnalyzer: 'locationAnalyzer',
-    joinNode:         'joinNode',
+    reportCompiler:   'reportCompiler',
   })
-  .addEdge('locationAnalyzer', 'joinNode')
+  .addEdge('locationAnalyzer', 'reportCompiler')
 
-  // alert conditionally drills person, then both paths converge at join
   .addConditionalEdges('alertScanner', routePerson, {
     personAnalyzer: 'personAnalyzer',
-    joinNode:       'joinNode',
+    reportCompiler: 'reportCompiler',
   })
-  .addEdge('personAnalyzer',   'joinNode')
-
-  // join waits for all upstream paths, then fires the report exactly once
-  .addEdge('joinNode',         'reportCompiler')
+  .addEdge('personAnalyzer',   'reportCompiler')
   .addEdge('reportCompiler',   '__end__')
 
 export const trendAgent = graph.compile()

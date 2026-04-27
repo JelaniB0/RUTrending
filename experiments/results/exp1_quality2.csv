@@ -1,0 +1,6 @@
+trial,campus,query,multi_accuracy,multi_specificity,multi_actionability,multi_completeness,multi_detail,multi_total,single_accuracy,single_specificity,single_actionability,single_completeness,single_detail,single_total,winner
+1,,,3,5,5,5,5,23,2,4,4,4,4,18,multi
+2,Busch,are there any repeat incident locations,5,5,5,5,5,25,4,4,4,4,4,20,multi
+3,Busch,,4,5,5,5,5,24,5,5,5,5,4,24,tie
+4,,which buildings have the most mental health incidents,3,5,5,5,5,23,3,4,4,4,4,19,multi
+5,Livingston,,4,4,4,4,4,20,5,5,5,5,5,25,single

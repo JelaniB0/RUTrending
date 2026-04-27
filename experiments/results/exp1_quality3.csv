@@ -1,0 +1,6 @@
+trial,campus,query,multi_accuracy,multi_specificity,multi_actionability,multi_completeness,multi_detail,multi_total,single_accuracy,single_specificity,single_actionability,single_completeness,single_detail,single_total,winner
+1,Cook/Douglass,,4,4,4,4,4,20,4,5,5,5,5,24,single
+2,,which buildings have the most mental health incidents,2,5,5,5,5,22,1,4,4,4,4,17,multi
+3,Livingston,,3,4,4,4,4,19,4,5,5,5,5,24,single
+4,Busch,are there any repeat incident locations,4,4,4,4,4,20,4,5,5,5,5,24,single
+5,,,5,5,5,5,5,25,1,4,4,4,4,17,multi

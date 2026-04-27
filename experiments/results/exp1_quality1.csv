@@ -1,0 +1,6 @@
+trial,campus,query,multi_accuracy,multi_specificity,multi_actionability,multi_completeness,multi_detail,multi_total,single_accuracy,single_specificity,single_actionability,single_completeness,single_detail,single_total,winner
+1,Busch,are there any repeat incident locations,5,5,5,5,5,25,4,5,5,5,4,23,multi
+2,,,5,5,5,5,5,25,2,4,4,4,4,18,multi
+3,Livingston,,5,5,5,5,5,25,5,5,5,5,4,24,multi
+4,Cook/Douglass,,5,4,4,4,4,21,5,5,5,5,5,25,single
+5,,where is RUPD being called most frequently,5,5,5,5,5,25,4,4,4,4,4,20,multi
